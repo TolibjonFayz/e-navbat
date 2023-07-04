@@ -1,4 +1,3 @@
-
 const pool = require("../config/db");
 const { encode, decode } = require("../services/crypt");
 const { v4: uuid4 } = require("uuid");
@@ -182,22 +181,46 @@ const updateOtp = async (req, res) => {
   }
 };
 
-const deleteOtp = async (req, res) => {
+const deleteOTP = async (req, res) => {
+  const { verification_key, check } = req.body;
+  console.log(req.body);
+
+  let decoded;
+
   try {
-    const id = req.params.id;
-    const deletingOtp = await pool.query(`DELETE FROM otp WHERE id = $1`, [id]);
-    if (deletingOtp.rowCount == 1)
-      res.json({ message: "Otp successfully deleted" });
-    else res.json({ message: "At this id otp not found" });
+    decoded = await decode(verification_key);
   } catch (error) {
-    res.status(400).json({ message: "Error is detected" });
+    console.error("Error decoding verification_key:", error);
+    const response = { Status: "Failure", Details: "Bad Request" };
+    return res.status(400).send(response);
   }
+  var obj = JSON.parse(decoded);
+  const check_obj = obj.check;
+
+  if (check_obj != check) {
+    const response = {
+      Status: "Failure",
+      Details: "OTP was not send to this particular phone number",
+    };
+    return res.status(400).send(response);
+  }
+  let params = { id: obj.otp_id };
+
+  const deletedOTP = await pool.query(
+    `DELETE FROM otp WHERE id=$1 RETURNING id`,
+    [params]
+  );
+  if (deletedOTP.rows.length == 0) {
+    return res.status(400).send("Invalid OTP");
+  }
+  return res.status(200).send(params);
 };
+
 module.exports = {
   getAllOtp,
   newOTP,
   getOtpById,
   updateOtp,
-  deleteOtp,
+  deleteOTP,
   verifyOTP,
 };
