@@ -2,6 +2,16 @@ const pool = require("../config/db");
 const { encode, decode } = require("../services/crypt");
 const { v4: uuid4 } = require("uuid");
 const otpGeneretor = require("otp-generator");
+const myJwt = require("../services/JwtService");
+const bcrypt = require("bcrypt");
+const DeviceDetector = require("node-device-detector");
+const DeviceHelper = require("node-device-detector/helper");
+const detector = new DeviceDetector({
+  clientIndexes: true,
+  deviceIndexes: true,
+  deviceAliasCode: false,
+});
+const config = require("config");
 
 function AddMinutesToDate(date, minutes) {
   return new Date(date.getTime() + minutes * 60000);
@@ -72,9 +82,9 @@ const verifyOTP = async (req, res) => {
   let decoded;
   try {
     decoded = await decode(verification_key);
-  } catch (error) {
-    const response = { Status: "Failure", Details: "Bad request" };
-    return res.status(400).json(response);
+  } catch (err) {
+    const response = { Status: "Failure", Details: "Bad Request" };
+    return res.status(400).send(response);
   }
 
   var obj = JSON.parse(decoded);
@@ -83,62 +93,111 @@ const verifyOTP = async (req, res) => {
   if (check_obj != check) {
     const response = {
       Status: "Failure",
-      Details: "Otp was not sent to this particular phone number",
+      Details: "OTP was not sent to this particular phone_number",
     };
     return res.status(400).send(response);
   }
 
-  const otpResult = await pool.query(`SELECT * FROM otp WHERE id = $1;`, [
+  const otpResult = await pool.query(`SELECT * FROM otp WHERE id=$1`, [
     obj.otp_id,
   ]);
-  const result = otpResult.rows[0];
-  if (result != null) {
-    //Check if OTP is already used or not
-    if (result.verified != true) {
-      //Check if OTP is expired or not
-      if (dates.compare(result.expiration_time, currentdate) == 1) {
-        //Check if OTP is equal to OTP in the DB
-        if (otp === result.otp) {
-          await pool.query(`UPDATE otp SET verified=$2 WHERE id=$1;`, [
-            result.id,
+  const resultt = otpResult.rows[0];
+  if (resultt != null) {
+    if (resultt.verified != true) {
+      if (dates.compare(resultt.expiration_time, currentdate) == 1) {
+        if (otp === resultt.otp) {
+          await pool.query(`UPDATE otp SET verified=$2 WHERE id=$1`, [
+            resultt.id,
             true,
           ]);
           const clientResult = await pool.query(
-            `SELECT * FROM client WHERE client_phone_number = $1;`,
+            `SELECT * FROM client WHERE client_phone_number = $1`,
             [check]
           );
+
+          let client_id, details;
           if (clientResult.rows.length == 0) {
-            const response = {
-              Status: "Success",
-              Details: "new",
-              Check: check,
-            };
-            return res.status(200).send(response);
+            const newClient = await pool.query(
+              `INSERT INTO client (client_phone_number,otp_id) VALUES ($1,$2) returning id`,
+              [check, obj.otp_id]
+            );
+            client_id = newClient.rows[0].id;
+            details = "new";
           } else {
-            const response = {
-              Status: "Success",
-              Details: "old",
-              Check: check,
-              ClientName: clientResult.rows[0].client_first_name,
-            };
-            return res.status(200).send(response);
+            client_id = clientResult.rows[0].id;
+            details = "old";
+            await pool.query(`UPDATE client SET otp_id=$2 WHERE id=$1`, [
+              client_id,
+              obj.otp_id,
+            ]);
           }
+          //tokenga tayyorgarlik
+          const payload = {
+            id: client_id,
+          };
+          const tokens = myJwt.generateToken(payload);
+
+          const response = {
+            Status: "Success",
+            Details: details,
+            Check: check,
+            ClientID: client_id,
+            Client_token: tokens,
+            tokens: tokens,
+          };
+
+          const hashed_refresh_token = bcrypt.hashSync(tokens.refreshToken, 8);
+
+          const userAgent = req.headers["user-agent"];
+          console.log(userAgent);
+          const result = detector.detect(userAgent);
+          console.log("result parse", result);
+          console.log(DeviceHelper.isDesktop(result));
+
+          const addingToToken = await pool.query(
+            `INSERT INTO token (table_name,user_id,user_os,user_device,user_browser,hashed_refresh_token) VALUES ($1, $2, $3, $4, $5, $6)`,
+            [
+              "client",
+              client_id,
+              result.os.name,
+              result.device.type,
+              result.client.name,
+              hashed_refresh_token,
+            ]
+          );
+
+          res.cookie("refreshToken", tokens.refreshToken, {
+            maxAge: config.get("refresh_ms"),
+            httpOnly: true,
+          });
+
+          return res.status(200).send(response);
         } else {
-          const response = { Status: "Failure", Details: "OTP not mutched" };
+          const response = { Status: "Failure", Details: "OTP NOT Matched" };
           return res.status(400).send(response);
         }
       } else {
-        const response = { Status: "Failure", Details: "OTP already expired" };
+        const response = { Status: "Failure", Details: "OTP Expired" };
         return res.status(400).send(response);
       }
     } else {
-      const response = { Status: "Failure", Details: "OTP already used" };
+      const response = { Status: "Failure", Details: "OTP Already Used" };
       return res.status(400).send(response);
     }
   } else {
-    const response = { Status: "Failure", Details: "Bad request" };
+    const response = { Status: "Failure", Details: "Bad Request" };
     return res.status(400).send(response);
   }
+};
+
+//refreshtoken
+const refreshToken = async (req, res) => {
+  const { refreshToken } = req.cookies;
+  if (!refreshToken)
+    return res.status(400).send({ message: "Token not found" });
+
+  const otpDataFromCookie = await myJwt.verifyRefresh(refreshToken);
+  const otpDataFromDB = {};
 };
 
 //Barcha otplarni olish

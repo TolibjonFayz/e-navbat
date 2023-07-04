@@ -9,10 +9,11 @@ const {
   verifyOTP,
   deleteOTP,
 } = require("../controllers/otp.controller");
+const clientPolice = require("../middlewares/clientPolice");
 
 const router = express.Router();
 
-router.get("/get", getAllOtp);
+router.get("/get", clientPolice, getAllOtp);
 router.post("/add", newOTP);
 router.get("/get/:id", getOtpById);
 router.put("/edit/:id", updateOtp);
