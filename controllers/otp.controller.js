@@ -189,17 +189,6 @@ const verifyOTP = async (req, res) => {
     return res.status(400).send(response);
   }
 };
-
-//refreshtoken
-const refreshToken = async (req, res) => {
-  const { refreshToken } = req.cookies;
-  if (!refreshToken)
-    return res.status(400).send({ message: "Token not found" });
-
-  const otpDataFromCookie = await myJwt.verifyRefresh(refreshToken);
-  const otpDataFromDB = {};
-};
-
 //Barcha otplarni olish
 const getAllOtp = async (req, res) => {
   try {

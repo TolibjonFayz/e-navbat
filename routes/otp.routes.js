@@ -1,10 +1,8 @@
 const express = require("express");
 const {
   getAllOtp,
-  addOtp,
   getOtpById,
   updateOtp,
-  deleteOtp,
   newOTP,
   verifyOTP,
   deleteOTP,
